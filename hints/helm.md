@@ -1,48 +1,12 @@
 # Using Helm
 
-## Installing helm and tiller
+## Installing helm
 https://github.com/kubernetes/helm
 https://docs.microsoft.com/en-us/azure/aks/kubernetes-helm
 
-Install helm (not required for azure shell)
-```
-wget https://storage.googleapis.com/kubernetes-helm/helm-v2.12.0-linux-amd64.tar.gz
-tar -zxvf helm-v2.12.0-linux-amd64.tar.gz
-mv linux-amd64/helm /usr/local/bin/helm
-```
+Install helm (not required for azure shell) on your own machine: https://github.com/helm/helm#install
 
-If you are unsure if your cluster is set up with RBAC please check by running
-```
-kubectl cluster-info dump --namespace kube-system | grep authorization-mode
-
-***Warning***: If your cluster has been set up with RBAC you have to create a role for tiller first
-```
-kubectl create serviceaccount tiller --namespace kube-system
-kubectl create clusterrolebinding tiller --clusterrole=cluster-admin --serviceaccount=kube-system:tiller --namespace kube-system
-helm init --service-account tiller --upgrade
-```
-
-Install tiller and upgrade tiller for NON-RBAC clusters
-```
-helm
-
-helm init
-echo "Upgrading tiller..."
-helm init --upgrade
-echo "Upgrading chart repo..."
-helm repo update
-```
-
-See all pods (including tiller)
-```
-kubectl get pods --namespace kube-system
-helm version
-```
-
-reinstall or delte tiller
-```
-helm reset
-```
+> We are using Helm 3 - if you have helm2 installed please check the version before and upgrade to helm3.
 
 Find and install helm charts from https://hub.helm.sh/
 
@@ -54,66 +18,122 @@ Find and install helm charts from https://hub.helm.sh/
 helm create dummychart
 ```
 
-Validate template
+1. Validate template
 ```
 helm lint ./dummychart
 ```
 
-2. Dry run the chart and override parameters
+1. Perform a dry run of an installation
 ```
+helm upgrade dummyInstanceName ./dummychart --install --dry-run --debug
+```
+
+add helm stable repo to your helm instance
+```
+helm repo add stable https://kubernetes-charts.storage.googleapis.com
+```
+
+Check the output
+
+## Package your own helm chart
+https://docs.microsoft.com/en-us/azure/container-registry/container-registry-helm-repos#add-a-chart-to-the-repository
+
+Create a tar from my helm chart
+```
+helm package dummychart --version 1.0.0 --app-version 1.0.12
+```
+
+List the azure container registry and configure it
+```
+ACR_NAME=$( az acr list --query "[].{Name:name}" -o tsv )
+az configure --defaults acr=$ACR_NAME
+az acr helm repo add
+```
+
+Push your local helm chart to your acr
+```
+az acr helm push dummychart-1.0.0.tgz --force
+```
+
+helm search 
+```
+az acr helm list -o table
+```
+
+## Deploy the existing multicalculator 
+
+1. Dry run the chart and override parameters
+```
+cd /phoenix/charts
 APP_NS=calculator
 APP_IN=calc1
 kubectl create ns $APP_NS
-helm install --dry-run --debug ./multicalchart --set frontendReplicaCount=3 --name=$APP_IN
+helm upgrade $APP_IN ./multicalculator --namespace $APP_NS --install --dry-run --debug
 ```
 
-You should see the dry run yaml output that would have been sent to tiller
+You should see the dry run yaml output that would have been sent to Kubernetes
 
-3. Now install the helm chart for real
+1. Now install the helm chart for real
 ```
-helm install multicalchart --set frontendReplicaCount=4 --set frontendReplicaCount=3 --name=$APP_IN --namespace=$APP_NS
-```
-
-verify
-```
-helm get values $APP_IN
+helm upgrade $APP_IN ./multicalculator --namespace $APP_NS --install
 ```
 
-4. Change config and perform an upgrade (change the backend image to to the go version and/or add application insights)
+1. verify
 ```
-helm upgrade multicalchart --set frontendReplicaCount=4 --set frontendReplicaCount=3 --name=$APP_IN --set dependencies.useAppInsights=true --set dependencies.appInsightsSecretValue=$APPINSIGHTS_KEY -set image.backendImage=go-calc-backend --namespace=$APP_NS
-```
-
-5. Change config and perform an upgrade (add a redis cache to the frontend pod)
-```
-helm upgrade multicalchart --set frontendReplicaCount=4 --set frontendReplicaCount=3 --name=$APP_IN --set dependencies.useAppInsights=true --set dependencies.appInsightsSecretValue=$APPINSIGHTS_KEY --set dependencies.usePodRedis=true --namespace=$APP_NS
+helm list -n $APP_NS
+helm get values $APP_IN $APP_IN
 ```
 
-The performance might be better if you use an azure redis cache. Create a redis cache
+1. Change config and perform an upgrade (change the backend image to to the go version and/or add application insights)
+```
+helm upgrade $APP_IN ./multicalculator --namespace $APP_NS --install
+```
+
+1. Change config and perform an upgrade (add application insights to your app)
+```
+
+APPINSIGHTS_KEY=
+helm upgrade $APP_IN ./multicalculator --namespace $APP_NS --install  --set replicaCount=4  --set dependencies.useAppInsights=true --set dependencies.appInsightsSecretValue=$APPINSIGHTS_KEY --set dependencies.usePodRedis=true
+```
+
+1. Check the values
+```
+helm get values $APP_IN $APP_IN
+```
+
+Examine the side car redis cache container and the performance impact.
+
+## Add azure redis cache to your calculator
+
+1. The performance might be better if you use an azure redis cache. Create a redis cache
 ```
 az redis create --location $LOCATION --name myownredis --resource-group $KUBE_GROUP --sku Basic --enable-non-ssl-port
 ```
 
-
-If you have a redis secret you can turn on the redis cache
+1. If you have a redis secret you can turn on the redis cache
 ```
 REDIS_HOST=myownredis.redis.cache.windows.net
 REDIS_AUTH=Idfsdfsd+Bs=
-helm upgrade $APP_IN multicalchart --set backendReplicaCount=3 --set frontendReplicaCount=3 --set dependencies.useAppInsights=false --set dependencies.useAzureRedis=true --set dependencies.redisHostValue=$REDIS_HOST --set dependencies.redisKeyValue=$REDIS_AUTH --namespace $APP_NS
+helm upgrade $APP_IN ./multicalculator --namespace $APP_NS --install  --set replicaCount=4  --set dependencies.useAppInsights=true --set dependencies.appInsightsSecretValue=$APPINSIGHTS_KEY --set dependencies.usePodRedis=true
+--set dependencies.useAzureRedis=true --set dependencies.redisHostValue=$REDIS_HOST --set dependencies.redisKeyValue=$REDIS_AUTH
 ```
 
-6. You can introduce faults, delays and errors in the backend by using the following config:
+1. You can introduce faults, delays and errors in the backend by using the following config:
 ```
-helm upgrade $APP_IN multicalchart --set backendReplicaCount=3 --set frontendReplicaCount=3 --set dependencies.useAppInsights=true --set dependencies.appInsightsSecretValue=$APPINSIGHTS_KEY --set dependencies.useAzureRedis=true --set dependencies.redisHostValue=$REDIS_HOST --set dependencies.redisKeyValue=$REDIS_AUTH --set introduceRandomResponseLag=false --set introduceRandomResponseLagValue=0 --namespace $APP_NS
+helm upgrade $APP_IN multicalculator --install --set backendReplicaCount=3 --set frontendReplicaCount=3 --set dependencies.useAppInsights=true --set dependencies.appInsightsSecretValue=$APPINSIGHTS_KEY --set dependencies.useAzureRedis=true --set dependencies.redisHostValue=$REDIS_HOST --set dependencies.redisKeyValue=$REDIS_AUTH --set introduceRandomResponseLag=false --set introduceRandomResponseLagValue=0 --namespace $APP_NS
+
+helm upgrade $APP_IN multicalculator --install --set backendReplicaCount=3 --set frontendReplicaCount=3 --set dependencies.useAppInsights=true --set dependencies.appInsightsSecretValue=$APPINSIGHTS_KEY --set dependencies.useAzureRedis=true --set dependencies.redisHostValue=$REDIS_HOST --set dependencies.redisKeyValue=$REDIS_AUTH --set introduceRandomResponseLag=true --set introduceRandomResponseLagValue=3 --namespace $APP_NS --dry-run --debug
 ```
 
-7. See rollout history
+## Rollout history and rollbacks
+
+1. See rollout history
 ```
-helm history $APP_IN
-helm rollback $APP_IN 2
+helm history $APP_IN -n $APP_NS
+helm rollback $APP_IN 2 -n $APP_NS
 ```
 
-8. Cleanup
+1. Cleanup
 ```
-helm delete $APP_IN --purge
+helm delete $APP_IN -n $APP_NS
 ```

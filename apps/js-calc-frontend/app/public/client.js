@@ -30,6 +30,17 @@ angular.module('CalculatorApp', [])
                     });                
             };
 
+            $scope.CalculateCssClass = function(versionValue){
+                if (versionValue && versionValue != undefined){
+                    if (versionValue.toString().indexOf("blue") >= 0)
+                        return "bg-info";
+                    else if (versionValue.toString().indexOf("green") >= 0)
+                        return "bg-green";
+                    else
+                        return "bg-yellow";
+                }
+            }
+
             $scope.Calculate = function () {
                 var postUrl = apiUrl + 'calculation';
                 var config = {

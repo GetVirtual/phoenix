@@ -11,6 +11,9 @@ if (config.instrumentationKey){
     appInsights.start();
 }
 var client = appInsights.defaultClient;
+client.commonProperties = {
+	slot: config.version
+};
 
 const express = require('express');
 const app = express();
@@ -33,7 +36,9 @@ app.get('/', function(req, res) {
 });
 app.get('/ping', function(req, res) {
     console.log('received ping');
-    res.send('Pong');
+    var pong = { response: "pong!", host: OS.hostname(), version: config.version };
+    console.log(pong);
+    res.send(pong);
 });
 app.get('/healthz', function(req, res) {
     res.send('OK');
@@ -61,10 +66,10 @@ var primeFactors = function getAllFactorsFor(remainder) {
     return factors;
 }
 
-// curl -X POST --header "number: 3" http://localhost:3001/api/calculation
+// curl -X POST --header "number: 3" --header "randomvictim: true" http://localhost:3002/api/calculation
 app.post('/api/calculation', function(req, res) {
     console.log("received client request:");
-    console.log(req.headers.number);
+    console.log(req.headers);
     if (config.instrumentationKey){ 
         var startDate = new Date();
         client.trackEvent( { name: "calculation-js-backend-call"});
@@ -93,13 +98,13 @@ app.post('/api/calculation', function(req, res) {
 
     var randomNumber = Math.floor((Math.random() * 20) + 1);
 
-    if (config.buggy && randomNumber > 19){
+    if ((req.headers.randomvictim && req.headers.randomvictim ===true ) || (config.buggy && randomNumber > 19)){
         console.log("looks like a 19 bug");
-        res.status(500).send({ value: "[ b, u, g]", error: "looks like a 19 bug", host: OS.hostname(), remote: remoteAddress });
+        res.status(500).send({ value: "[ b, u, g]", error: "looks like a 19 bug", host: OS.hostname(), remote: remoteAddress, version: config.version });
     }
     else{
         var remoteAddress = req.connection.remoteAddress;
-        var serverResult = JSON.stringify({ timestamp: endDate, value: resultValue, host: OS.hostname(), remote: remoteAddress } );
+        var serverResult = JSON.stringify({ timestamp: endDate, value: resultValue, host: OS.hostname(), remote: remoteAddress, version: config.version } );
         console.log(serverResult);
         res.send(serverResult.toString());
     }
