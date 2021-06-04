@@ -16,8 +16,8 @@ You need a service principal for Kubernetes to use - if you do not have, use the
 Try to define a unique but short deployment name - it will be used to define  dns names
 
 ```
-DEPLOYMENT_NAME=dztenix
-
+DEPLOYMENT_NAME=dzphix1
+echo "creating service principals in azure"
 AKS_SERVICE_PRINCIPAL_ID=$(az ad sp create-for-rbac --name $DEPLOYMENT_NAME-aks -o json | jq -r '.appId')
 AZDO_SERVICE_PRINCIPAL_ID=$(az ad sp create-for-rbac --name $DEPLOYMENT_NAME-azdo -o json | jq -r '.appId')
 
@@ -45,6 +45,7 @@ echo -e "\n\n"
 
 
 echo -e "\n This is the private output in case you want to set them later:"
+echo -e "DEPLOYMENT_NAME=$DEPLOYMENT_NAME"
 echo -e "AKS_SERVICE_PRINCIPAL_ID=$AKS_SERVICE_PRINCIPAL_ID"
 echo -e "AZDO_SERVICE_PRINCIPAL_ID=$AZDO_SERVICE_PRINCIPAL_ID"
 echo -e "AKS_SERVICE_PRINCIPAL_SECRET=$AKS_SERVICE_PRINCIPAL_SECRET"
@@ -94,6 +95,14 @@ apply the execution plan
 terraform apply out.plan
 ```
 
+1. configure the application gateway addon
+```
+KUBE_GROUP=dzphix_284
+KUBE_NAME=dzphix-284
+appgwId=$(az network application-gateway list -g $KUBE_GROUP -o tsv --query "[].id") 
+az aks enable-addons -n $KUBE_NAME -g $KUBE_GROUP -a ingress-appgw --appgw-id $appgwId
+```
+
 1. optionally you can create another environment using the following process:
 
 ```
@@ -108,7 +117,6 @@ ACR_RG_ID=$(az group show -n $DEPLOYMENT_NAME --query id -o tsv)
 ACR_ID=$(az acr list -g $DEPLOYMENT_NAME --query '[0].id' -o tsv)
 ACR_AKS_ID=$(az role assignment list --scope $ACR_ID --assignee $AKS_SERVICE_PRINCIPAL_OBJECTID --query '[0].id' -o tsv)
 ACR_AZDO_ID=$(az role assignment list --scope $ACR_ID --assignee $AZDO_SERVICE_PRINCIPAL_OBJECTID --query '[0].id' -o tsv)
-ATF_ID=$(az network traffic-manager profile list -g $DEPLOYMENT_NAME --query '[0].id' -o tsv)
 
 terraform init
 echo "importing existing azure container registry"
@@ -116,7 +124,6 @@ terraform import azurerm_resource_group.acrrg $ACR_RG_ID
 terraform import azurerm_container_registry.aksacr $ACR_ID
 terraform import azurerm_role_assignment.aksacrrole $ACR_AKS_ID
 terraform import azurerm_role_assignment.azdoacrrole $ACR_AZDO_ID
-terraform import azurerm_traffic_manager_profile.shared_traffic $ATF_ID
 
 echo "redeploying"
 terraform plan -out out.plan

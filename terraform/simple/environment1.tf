@@ -1,6 +1,6 @@
 # https://www.terraform.io/docs/providers/azurerm/d/resource_group.html
 resource "azurerm_resource_group" "aksrg" {
-  name     = "${var.resource_group_name}-${random_integer.random_int.result}"
+  name     = "${var.resource_group_name}_${random_integer.random_int.result}"
   location = var.location
     
   tags = {
@@ -27,35 +27,35 @@ resource "azurerm_subnet" "gwnet" {
   name                      = "gw-1-subnet"
   resource_group_name       = azurerm_resource_group.aksrg.name
   #network_security_group_id = "${azurerm_network_security_group.aksnsg.id}"
-  address_prefix            = "10.0.1.0/24"
+  address_prefixes            = ["10.0.1.0/24"]
   virtual_network_name      = azurerm_virtual_network.kubevnet.name
 }
 resource "azurerm_subnet" "acinet" {
   name                      = "aci-2-subnet"
   resource_group_name       = azurerm_resource_group.aksrg.name
   #network_security_group_id = "${azurerm_network_security_group.aksnsg.id}"
-  address_prefix            = "10.0.2.0/24"
+  address_prefixes            = ["10.0.2.0/24"]
   virtual_network_name      = azurerm_virtual_network.kubevnet.name
 }
 resource "azurerm_subnet" "fwnet" {
   name                      = "AzureFirewallSubnet"
   resource_group_name       = azurerm_resource_group.aksrg.name
   #network_security_group_id = "${azurerm_network_security_group.aksnsg.id}"
-  address_prefix            = "10.0.6.0/24"
+  address_prefixes            = ["10.0.6.0/24"]
   virtual_network_name      = azurerm_virtual_network.kubevnet.name
 }
 resource "azurerm_subnet" "ingnet" {
   name                      = "ing-4-subnet"
   resource_group_name       = azurerm_resource_group.aksrg.name
   #network_security_group_id = "${azurerm_network_security_group.aksnsg.id}"
-  address_prefix            = "10.0.4.0/24"
+  address_prefixes            = ["10.0.4.0/24"]
   virtual_network_name      = azurerm_virtual_network.kubevnet.name
 }
 resource "azurerm_subnet" "aksnet" {
   name                      = "aks-5-subnet"
   resource_group_name       = azurerm_resource_group.aksrg.name
   #network_security_group_id = "${azurerm_network_security_group.aksnsg.id}"
-  address_prefix            = "10.0.5.0/24"
+  address_prefixes            = ["10.0.5.0/24"]
   virtual_network_name      = azurerm_virtual_network.kubevnet.name
 }
 
@@ -63,7 +63,8 @@ resource "azurerm_public_ip" "appgw_ip" {
   name                = "${var.dns_prefix}-${random_integer.random_int.result}-appgwpip"
   resource_group_name = azurerm_resource_group.aksrg.name
   location            = azurerm_resource_group.aksrg.location
-  allocation_method   = "Dynamic"
+  allocation_method   = "Static"
+  sku                 = "Standard"
 }
 
 # https://www.terraform.io/docs/providers/azurerm/r/application_gateway.html
@@ -73,9 +74,9 @@ resource "azurerm_application_gateway" "appgw" {
   location            = azurerm_resource_group.aksrg.location
 
   sku {
-    name     = "Standard_Small"
-    tier     = "Standard"
-    capacity = 2
+    name     = "Standard_v2"
+    tier     = "Standard_v2"
+    capacity = 1
   }
 
   gateway_ip_configuration {
@@ -134,6 +135,84 @@ resource "azurerm_application_gateway" "appgw" {
     http_listener_name         = "listener-name"
     backend_address_pool_name  = "backend-pool-name"
     backend_http_settings_name = "http-setting-name"
+  }
+}
+
+resource "azurerm_key_vault_secret" "tfm-blue-ip" {
+  name         = "tfm-blue-ip"
+  value        = azurerm_public_ip.tfm-blue.ip_address
+  key_vault_id = azurerm_key_vault.aksvault.id
+  
+  tags = {
+    environment = var.environment
+    project     = "phoenix"
+  }
+}
+
+resource "azurerm_public_ip" "tfm-blue" {
+  name                         = "tfm-blue"
+  location                     = azurerm_kubernetes_cluster.akstf.location
+  resource_group_name          = azurerm_kubernetes_cluster.akstf.node_resource_group
+  allocation_method            = "Static"
+  sku                          = "Standard"
+  domain_name_label            = "${var.dns_prefix}-${random_integer.random_int.result}-blue"
+}
+
+resource "azurerm_key_vault_secret" "tfm-green-ip" {
+  name         = "tfm-green-ip"
+  value        = azurerm_public_ip.tfm-green.ip_address
+  key_vault_id = azurerm_key_vault.aksvault.id
+  
+  tags = {
+    environment = var.environment
+    project     = "phoenix"
+  }
+}
+
+resource "azurerm_public_ip" "tfm-green" {
+  name                         = "tfm-green"
+  location                     = azurerm_kubernetes_cluster.akstf.location
+  resource_group_name          = azurerm_kubernetes_cluster.akstf.node_resource_group
+  allocation_method            = "Static"
+  sku                          = "Standard"
+  domain_name_label            = "${var.dns_prefix}-${random_integer.random_int.result}-green"
+}
+
+# https://www.terraform.io/docs/providers/azurerm/r/traffic_manager_profile.html
+resource "azurerm_traffic_manager_profile" "tfmprofile" {
+  name                   = "${var.dns_prefix}-${random_integer.random_int.result}tfm"
+  resource_group_name    = azurerm_resource_group.aksrg.name
+  traffic_routing_method = "Weighted"
+
+  dns_config {
+    relative_name = "${var.dns_prefix}-${random_integer.random_int.result}tfm"
+    ttl           = 100
+  }
+
+  monitor_config {
+    protocol                     = "http"
+    port                         = 80
+    path                         = "/"
+    interval_in_seconds          = 30
+    timeout_in_seconds           = 9
+    tolerated_number_of_failures = 3
+  }
+
+  tags = {
+    environment = var.environment
+    project     = "phoenix"
+  }
+}
+
+# https://www.terraform.io/docs/providers/azurerm/r/key_vault_secret.html
+resource "azurerm_key_vault_secret" "tfm_name" {
+  name         = "tfm-name"
+  value        = azurerm_traffic_manager_profile.tfmprofile.name
+  key_vault_id = azurerm_key_vault.aksvault.id
+  
+  tags = {
+    environment = var.environment
+    project     = "phoenix"
   }
 }
 
@@ -266,9 +345,9 @@ resource "azurerm_key_vault_secret" "public_ip" {
   }
 }
 
-resource "azurerm_key_vault_secret" "public_ip_stage" {
-  name         = "phoenix-fqdn-stage"
-  value        = "${azurerm_public_ip.nginx_ingress-stage.ip_address}.xip.io"
+resource "azurerm_key_vault_secret" "appgw_public_ip" {
+  name         = "appgw-fqdn"
+  value        = "${azurerm_public_ip.appgw_ip.ip_address}.xip.io"
   key_vault_id = azurerm_key_vault.aksvault.id
   
   tags = {
@@ -342,7 +421,7 @@ resource "azurerm_kubernetes_cluster" "akstf" {
   location            = azurerm_resource_group.aksrg.location
   resource_group_name = azurerm_resource_group.aksrg.name
   dns_prefix          = var.dns_prefix
-  kubernetes_version  = var.kubernetes_version
+  # kubernetes_version  = var.kubernetes_version
   node_resource_group = "${azurerm_resource_group.aksrg.name}_nodes_${azurerm_resource_group.aksrg.location}"
   linux_profile {
     admin_username = "phoenix"
@@ -354,15 +433,19 @@ resource "azurerm_kubernetes_cluster" "akstf" {
 
   default_node_pool {
     name               = "default"
-    node_count         = 1
+    node_count         = 2
     vm_size            = "Standard_DS2_v2" #"Standard_F4s" # Standard_DS2_v2
     os_disk_size_gb    = 120
     max_pods           = 30
     vnet_subnet_id     = azurerm_subnet.aksnet.id
     type               = "VirtualMachineScaleSets"
     enable_auto_scaling = true
-    min_count       = 1
+    min_count       = 2
     max_count       = 4
+  }
+
+  role_based_access_control {
+    enabled        = true
   }
 
   network_profile {
@@ -374,9 +457,8 @@ resource "azurerm_kubernetes_cluster" "akstf" {
       load_balancer_sku = "standard"
   }
 
-  service_principal {
-    client_id     = var.service_principal_id
-    client_secret = var.service_principal_secret
+  identity {
+    type = "SystemAssigned"
   }
 
   addon_profile {
@@ -386,7 +468,7 @@ resource "azurerm_kubernetes_cluster" "akstf" {
     }
 
     kube_dashboard {
-      enabled = true
+      enabled = false
     }
   }
 
@@ -446,17 +528,11 @@ provider "helm" {
   }
 }
 
-# https://www.terraform.io/docs/providers/helm/repository.html
-data "helm_repository" "stable" {
-    name = "stable"
-    url  = "https://kubernetes-charts.storage.googleapis.com"
-}
-
 # Install Nginx Ingress using Helm Chart
 # https://www.terraform.io/docs/providers/helm/release.html
 resource "helm_release" "nginx_ingress" {
   name       = "nginx-ingress"
-  repository = data.helm_repository.stable.metadata.0.name
+  repository = "https://kubernetes-charts.storage.googleapis.com" 
   chart      = "nginx-ingress"
   namespace  = "nginx"
   force_update = "true"
@@ -504,6 +580,14 @@ resource "null_resource" "set-env-vars" {
     command = "export KUBE_GROUP=${azurerm_resource_group.aksrg.name}; export KUBE_NAME=${azurerm_kubernetes_cluster.akstf.name}; export LOCATION=${var.location}"
   }
   depends_on = [azurerm_kubernetes_cluster.akstf]
+}
+
+output "KUBE_NAME" {
+    value = azurerm_kubernetes_cluster.akstf.name
+}
+
+output "KUBE_GROUP" {
+    value = azurerm_resource_group.aksrg.name
 }
 
 output "NODE_GROUP" {

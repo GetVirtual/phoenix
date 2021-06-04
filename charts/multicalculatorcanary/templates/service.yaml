@@ -5,7 +5,14 @@ metadata:
   labels:
     {{- include "multicalculatorcanary.labels" . | nindent 4 }}
     role: frontend
+  {{- if not (empty .Values.service.dns) }}
+  annotations:
+    service.beta.kubernetes.io/azure-dns-label-name: {{ .Values.service.dns | quote }}
+  {{- end }}
 spec:
+  {{- if not (empty .Values.service.ip) }}
+  loadBalancerIP: {{ .Values.service.ip }}
+  {{- end }}
   type: {{ .Values.service.type }}
   ports:
     - port: {{ .Values.service.port }}
